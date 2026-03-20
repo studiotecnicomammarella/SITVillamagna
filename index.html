@@ -495,19 +495,28 @@
       applyFoglioFilter();
     });
 
+    // ── Listener select: definiti una volta sola, controllano la combo ──
+    // Evita l'accumulo di listener multipli che causano effetti indesiderati
+    // (es. lyr_CIVICI.setVisible attivato anche durante ricerca CATASTO)
+    function onSelectHandler() {
+      if (selectElt.value === 'VIA E CIVICO') {
+        lyr_CIVICI.setVisible(true);
+      } else if (selectElt.value === 'CATASTO') {
+        lyr_Particelle.setVisible(true);
+      }
+    }
+    search.on('select', onSelectHandler);
+
     // ── Cambio combo principale ───────────────────────────────────────
     function handleComboBoxChange() {
       search.clearHistory();
       search.setInput('');
-      isManualSearch = true;
 
       if (selectElt.value === 'VIA E CIVICO') {
         showFoglioFilter(false);
         search.setSource(lyr_CIVICI.getSource());
         search.set('property', 'VIA E CIVICO');
         search.set('placeholder', 'Find VIA E CIVICO ...');
-        if (isManualSearch)
-          search.on('select', function() { lyr_CIVICI.setVisible(true); });
       }
 
       if (selectElt.value === 'CATASTO') {
@@ -516,10 +525,6 @@
         search.setSource(lyr_Particelle.getSource());
         search.set('property', 'CATASTO');
         search.set('placeholder', 'Cerca in CATASTO (Foglio+Mappale) ...');
-        if (isManualSearch)
-          search.on('select', function() {
-            lyr_Particelle.setVisible(true);
-          });
         showFoglioFilter(true);
       }
 
