@@ -332,99 +332,251 @@
 
 <!-- search feature -->
 
-      <script>
-        function searchFeatures() {          
-            // Insert combo box for source choice
-            var selectElt = document.createElement('select');
-            var buttonElt = search.element.querySelector('button');
-            search.element.insertBefore(selectElt, buttonElt);
-            /*
-            //// Example: Collection to merge multiple sources
-            //class sourceCollection extends ol.source.Vector {
-            //	constructor(opt) {
-            //		opt = opt || {};
-            //		super(opt);
-            //		this._sources = opt.sources;
-            //	}
-            //	getFeatures() {
-            //		var a = [];
-            //		this._sources.forEach(s => a = a.concat(s.getFeatures()));
-            //		return a;
-            //	}
-            //}
-            //// Define all source layers
-            //const combinedSource = new sourceCollection({
-            //	sources: [lyr_Option1.getSource(), lyr_Option2.getSource(), lyr_Option3.getSource()]
-            //});
-            */
-            // Set options to search in different source, one at a time
-            ['VIA E CIVICO', 'CATASTO'].forEach(function (l) {
-              ol.ext.element.create('OPTION', {
-                text: l,
-                parent: selectElt
-              });
-            });
-            // For each option set data to perform the search
-            function handleComboBoxChange() {
-              search.clearHistory();
-              search.setInput('');
-              isManualSearch = true;
+<!-- Stile per il filtro Foglio nel layer Particelle -->
+<style>
+  #foglio-filter-container {
+    display: none;
+    position: absolute;
+    z-index: 10;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 4px 6px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    font-size: 13px;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  #foglio-filter-container label {
+    margin: 0;
+    font-weight: bold;
+    color: #333;
+  }
+  #foglio-filter-select {
+    font-size: 13px;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    padding: 2px 4px;
+    max-width: 120px;
+  }
+  #foglio-filter-reset {
+    font-size: 12px;
+    cursor: pointer;
+    background: #e74c3c;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    padding: 2px 6px;
+  }
+  #foglio-filter-reset:hover { background: #c0392b; }
+</style>
 
-              if (selectElt.value === 'VIA E CIVICO') {
-                search.setSource(lyr_CIVICI.getSource());
-                search.set('property', 'VIA E CIVICO');
-                search.set('placeholder', 'Find VIA E CIVICO ...');
-                if (isManualSearch) {
-                    search.on('select', function(e) { lyr_CIVICI.setVisible(true); }); //show layer when search
-                }	
-              } 
-              if (selectElt.value === 'CATASTO') {
-                search.setSource(lyr_Particelle.getSource());
-                search.set('property', 'CATASTO');
-                search.set('placeholder', 'Find CATASTO ...');
-                if (isManualSearch) {
-                    search.on('select', function(e) { lyr_Particelle.setVisible(true); }); //show layer when search
-                }	
-              }
-              // Reset del placeholder nella barra di ricerca
-              var inputField = search.element.querySelector('.ol-search input');
-              inputField.placeholder = search.get('placeholder');
-              // Reset lista risultati dopo cambio combo
-              search.drawList_();
-            }
-            handleComboBoxChange();
-            // Lista i risultati all'avvio
-            search.drawList_ = function(auto) {
-                if (!auto) {
-                    source = search.getSource()
-                    // Get all features
-                    auto = source instanceof ol.source.Cluster ? source.getSource().getFeatures() : source.getFeatures();
-                }			
-                // Sort result 
-                auto = auto.slice().sort(function(f1, f2) {
-                    if (search.getSearchString(f1) < search.getSearchString(f2)) return -1;
-                    if (search.getSearchString(f1) > search.getSearchString(f2)) return 1;
-                    return 0;
-                  });
-                // Call the default behavior
-                ol.control.SearchFeature.prototype.drawList_.call(search, auto)
-                // Clear list from 'undefined' values and empty elements from Source
-                $('.ol-search > ul > li[data-search]').filter(function() {
-                    const text = $(this).text().trim();
-                    return text === 'undefined' || text === '';
-                }).remove();
-            }
+<div id="foglio-filter-container">
+  <label>Foglio:</label>
+  <select id="foglio-filter-select">
+    <option value="">-- tutti i fogli --</option>
+  </select>
+  <button id="foglio-filter-reset" title="Rimuovi filtro Foglio">✕</button>
+</div>
 
-            // Change event
-            selectElt.addEventListener('change', function() {
-              handleComboBoxChange(); 
-            });	
-        }
-        if (window.layersLoadedFlag) {
-            searchFeatures();
+<script>
+  function searchFeatures() {
+
+    // ── Combo principale (VIA E CIVICO / CATASTO) ──────────────────────
+    var selectElt = document.createElement('select');
+    var buttonElt = search.element.querySelector('button');
+    search.element.insertBefore(selectElt, buttonElt);
+
+    ['VIA E CIVICO', 'CATASTO'].forEach(function(l) {
+      ol.ext.element.create('OPTION', { text: l, parent: selectElt });
+    });
+
+    // ── Elementi filtro Foglio ─────────────────────────────────────────
+    var foglioContainer = document.getElementById('foglio-filter-container');
+    var foglioSelect    = document.getElementById('foglio-filter-select');
+    var foglioReset     = document.getElementById('foglio-filter-reset');
+    var currentFoglio   = '';
+
+    // sorgente filtrata riutilizzabile (ol.source.Vector reale)
+    var filteredSource = new ol.source.Vector();
+
+    // ── Posiziona il pannello filtro sotto il search control ───────────
+    function positionFoglioFilter() {
+      var r = search.element.getBoundingClientRect();
+      foglioContainer.style.top  = (r.bottom + window.scrollY + 4) + 'px';
+      foglioContainer.style.left = r.left + 'px';
+    }
+
+    // ── Popola la <select> con i fogli univoci ────────────────────────
+    function populateFoglioSelect() {
+      var src = lyr_Particelle.getSource();
+      var features = src instanceof ol.source.Cluster
+        ? src.getSource().getFeatures() : src.getFeatures();
+
+      var fogli = [];
+      features.forEach(function(f) {
+        var v = f.get('Foglio');
+        if (v !== undefined && v !== null && v !== '' && fogli.indexOf(v) === -1)
+          fogli.push(v);
+      });
+
+      fogli.sort(function(a, b) {
+        var na = parseFloat(a), nb = parseFloat(b);
+        return (!isNaN(na) && !isNaN(nb)) ? na - nb : String(a).localeCompare(String(b));
+      });
+
+      foglioSelect.innerHTML = '<option value="">-- tutti i fogli --</option>';
+      fogli.forEach(function(v) {
+        var opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = 'Foglio ' + v;
+        foglioSelect.appendChild(opt);
+      });
+    }
+
+    // ── Aggiorna la sorgente filtrata e la passa al search ─────────────
+    // Questa è la correzione chiave: search.setSource() riceve sempre
+    // una ol.source.Vector reale che contiene SOLO le feature del foglio.
+    function applyFoglioFilter() {
+      var src = lyr_Particelle.getSource();
+      var allFeatures = src instanceof ol.source.Cluster
+        ? src.getSource().getFeatures() : src.getFeatures();
+
+      filteredSource.clear();
+
+      if (currentFoglio) {
+        // Solo le feature del foglio selezionato
+        var subset = allFeatures.filter(function(f) {
+          return String(f.get('Foglio')) === String(currentFoglio);
+        });
+        filteredSource.addFeatures(subset);
+        search.setSource(filteredSource);
+        search.set('property', 'Mappale');
+        search.set('placeholder', 'Cerca Mappale nel Foglio ' + currentFoglio + ' ...');
+      } else {
+        // Nessun filtro: ripristina la sorgente completa
+        search.setSource(lyr_Particelle.getSource());
+        search.set('property', 'CATASTO');
+        search.set('placeholder', 'Cerca in CATASTO (Foglio+Mappale) ...');
+      }
+
+      var inputField = search.element.querySelector('.ol-search input');
+      inputField.placeholder = search.get('placeholder');
+      search.clearHistory();
+      search.setInput('');
+      search.drawList_();
+    }
+
+    // ── Mostra / nascondi pannello filtro ─────────────────────────────
+    function showFoglioFilter(show) {
+      if (show) {
+        positionFoglioFilter();
+        if (foglioContainer.parentNode !== document.body)
+          document.body.appendChild(foglioContainer);
+        foglioContainer.style.display = 'flex';
+        populateFoglioSelect();
+      } else {
+        foglioContainer.style.display = 'none';
+        currentFoglio = '';
+        foglioSelect.value = '';
+      }
+    }
+
+    // ── Eventi filtro Foglio ──────────────────────────────────────────
+    foglioSelect.addEventListener('change', function() {
+      currentFoglio = foglioSelect.value;
+      applyFoglioFilter();
+    });
+
+    foglioReset.addEventListener('click', function() {
+      currentFoglio = '';
+      foglioSelect.value = '';
+      applyFoglioFilter();
+    });
+
+    // ── Cambio combo principale ───────────────────────────────────────
+    function handleComboBoxChange() {
+      search.clearHistory();
+      search.setInput('');
+      isManualSearch = true;
+
+      if (selectElt.value === 'VIA E CIVICO') {
+        showFoglioFilter(false);
+        search.setSource(lyr_CIVICI.getSource());
+        search.set('property', 'VIA E CIVICO');
+        search.set('placeholder', 'Find VIA E CIVICO ...');
+        if (isManualSearch)
+          search.on('select', function() { lyr_CIVICI.setVisible(true); });
+      }
+
+      if (selectElt.value === 'CATASTO') {
+        currentFoglio = '';
+        filteredSource.clear();
+        search.setSource(lyr_Particelle.getSource());
+        search.set('property', 'CATASTO');
+        search.set('placeholder', 'Cerca in CATASTO (Foglio+Mappale) ...');
+        if (isManualSearch)
+          search.on('select', function() { lyr_Particelle.setVisible(true); });
+        showFoglioFilter(true);
+      }
+
+      var inputField = search.element.querySelector('.ol-search input');
+      inputField.placeholder = search.get('placeholder');
+      search.drawList_();
+    }
+
+    handleComboBoxChange();
+
+    // ── Override drawList_ ────────────────────────────────────────────
+    search.drawList_ = function(auto) {
+      if (!auto) {
+        var src = search.getSource();
+        auto = src instanceof ol.source.Cluster
+          ? src.getSource().getFeatures() : src.getFeatures();
+      }
+      auto = auto.slice().sort(function(f1, f2) {
+        if (search.getSearchString(f1) < search.getSearchString(f2)) return -1;
+        if (search.getSearchString(f1) > search.getSearchString(f2)) return 1;
+        return 0;
+      });
+      ol.control.SearchFeature.prototype.drawList_.call(search, auto);
+      $('.ol-search > ul > li[data-search]').filter(function() {
+        var text = $(this).text().trim();
+        return text === 'undefined' || text === '';
+      }).remove();
+    };
+
+    // ── Override getSearchString ──────────────────────────────────────
+    var _origGetSearchString = search.getSearchString.bind(search);
+    search.getSearchString = function(f) {
+      if (selectElt.value === 'CATASTO') {
+        if (currentFoglio) {
+          // Foglio attivo → cerca solo per Mappale
+          var m = f.get('Mappale');
+          return (m !== undefined && m !== null) ? String(m) : '';
         } else {
-            document.addEventListener('layersLoaded', searchFeatures);
+          // Nessun filtro → mostra campo CATASTO oppure F<x> M<y>
+          var catasto = f.get('CATASTO');
+          if (catasto !== undefined && catasto !== null && catasto !== '')
+            return String(catasto);
+          var fog = f.get('Foglio'), map = f.get('Mappale');
+          return (fog !== undefined && map !== undefined)
+            ? 'F' + fog + ' M' + map : '';
         }
+      }
+      return _origGetSearchString(f);
+    };
+
+    // ── Evento cambio combo ───────────────────────────────────────────
+    selectElt.addEventListener('change', handleComboBoxChange);
+  }
+
+  if (window.layersLoadedFlag) {
+    searchFeatures();
+  } else {
+    document.addEventListener('layersLoaded', searchFeatures);
+  }
 </script>
 
 <!-- search feature 
