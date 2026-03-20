@@ -517,7 +517,11 @@
         search.set('property', 'CATASTO');
         search.set('placeholder', 'Cerca in CATASTO (Foglio+Mappale) ...');
         if (isManualSearch)
-          search.on('select', function() { lyr_Particelle.setVisible(true); });
+          search.on('select', function() {
+            lyr_Particelle.setVisible(true);
+            // Nascondi il pannello filtro dopo la selezione del risultato
+            foglioContainer.style.display = 'none';
+          });
         showFoglioFilter(true);
       }
 
@@ -527,6 +531,23 @@
     }
 
     handleComboBoxChange();
+
+    // ── Nascondi il pannello filtro cliccando fuori dalla ricerca ─────
+    document.addEventListener('click', function(e) {
+      if (foglioContainer.style.display === 'flex' &&
+          !foglioContainer.contains(e.target) &&
+          !search.element.contains(e.target)) {
+        foglioContainer.style.display = 'none';
+      }
+    });
+
+    // ── Mostra di nuovo il pannello se si riapre la ricerca CATASTO ───
+    search.element.addEventListener('click', function() {
+      if (selectElt.value === 'CATASTO') {
+        positionFoglioFilter();
+        foglioContainer.style.display = 'flex';
+      }
+    });
 
     // ── Override drawList_ ────────────────────────────────────────────
     search.drawList_ = function(auto) {
