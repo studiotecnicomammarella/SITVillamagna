@@ -519,8 +519,6 @@
         if (isManualSearch)
           search.on('select', function() {
             lyr_Particelle.setVisible(true);
-            // Nascondi il pannello filtro dopo la selezione del risultato
-            foglioContainer.style.display = 'none';
           });
         showFoglioFilter(true);
       }
@@ -532,22 +530,62 @@
 
     handleComboBoxChange();
 
-    // ── Nascondi il pannello filtro cliccando fuori dalla ricerca ─────
-    document.addEventListener('click', function(e) {
-      if (foglioContainer.style.display === 'flex' &&
-          !foglioContainer.contains(e.target) &&
-          !search.element.contains(e.target)) {
-        foglioContainer.style.display = 'none';
-      }
-    });
+    // ── Funzione reset completo filtro CATASTO ───────────────────────
+    function resetCatastoSearch() {
+      currentFoglio = '';
+      foglioSelect.value = '';
+      filteredSource.clear();
+      search.setSource(lyr_Particelle.getSource());
+      search.set('property', 'CATASTO');
+      search.set('placeholder', 'Cerca in CATASTO (Foglio+Mappale) ...');
+      var inputField = search.element.querySelector('.ol-search input');
+      if (inputField) inputField.placeholder = search.get('placeholder');
+      search.clearHistory();
+      search.setInput('');
+      search.drawList_();
+    }
 
-    // ── Mostra di nuovo il pannello se si riapre la ricerca CATASTO ───
-    search.element.addEventListener('click', function() {
-      if (selectElt.value === 'CATASTO') {
-        positionFoglioFilter();
-        foglioContainer.style.display = 'flex';
-      }
-    });
+    // ── Gestione click sul pulsante lente ────────────────────────────
+    // ol-ext usa il <button> per aprire/chiudere la barra.
+    // Osserviamo la visibilità dell'<input> DOPO il click (setTimeout 0)
+    // per sapere se la barra si è appena aperta o chiusa.
+    var btn = search.element.querySelector('button');
+    if (btn) {
+      btn.addEventListener('click', function() {
+        setTimeout(function() {
+          var inputField = search.element.querySelector('input');
+          var barraAperta = inputField && inputField.offsetParent !== null;
+          if (barraAperta) {
+            // Barra appena aperta: reset e mostra filtro pulito
+            if (selectElt.value === 'CATASTO') {
+              resetCatastoSearch();
+              positionFoglioFilter();
+              foglioContainer.style.display = 'flex';
+            }
+          } else {
+            // Barra chiusa: nascondi filtro
+            foglioContainer.style.display = 'none';
+          }
+        }, 0);
+      });
+    }
+
+    // ── Il pannello filtro si nasconde SOLO nei casi espliciti: ─────────
+    // 1) click sulla lente (già gestito sopra nel btn listener)
+    // 2) cambio combo su VIA E CIVICO (già gestito in handleComboBoxChange)
+    // 3) barra di ricerca chiusa (già gestito nel btn setTimeout)
+    // NON si nasconde per click sulla mappa, popup, o qualsiasi altro elemento.
+
+    // ── Click sull'input → rimostra il pannello se era stato chiuso ───
+    var searchInput = search.element.querySelector('input');
+    if (searchInput) {
+      searchInput.addEventListener('focus', function() {
+        if (selectElt.value === 'CATASTO') {
+          positionFoglioFilter();
+          foglioContainer.style.display = 'flex';
+        }
+      });
+    }
 
     // ── Override drawList_ ────────────────────────────────────────────
     search.drawList_ = function(auto) {
@@ -556,9 +594,26 @@
         auto = src instanceof ol.source.Cluster
           ? src.getSource().getFeatures() : src.getFeatures();
       }
+      // Ordina per rilevanza: esatto > inizia con > contiene > alfabetico
+      var q = (search.element.querySelector('input') || {}).value || '';
+      q = q.trim().toLowerCase();
+      function relevance(f) {
+        var s = String(search.getSearchString(f) || '').toLowerCase();
+        if (!q) return 3; // nessun testo: ordine alfabetico
+        if (s === q)            return 0; // corrispondenza esatta
+        if (s.startsWith(q))   return 1; // inizia con
+        if (s.indexOf(q) >= 0) return 2; // contiene
+        return 3;
+      }
       auto = auto.slice().sort(function(f1, f2) {
-        if (search.getSearchString(f1) < search.getSearchString(f2)) return -1;
-        if (search.getSearchString(f1) > search.getSearchString(f2)) return 1;
+        var r1 = relevance(f1), r2 = relevance(f2);
+        if (r1 !== r2) return r1 - r2;
+        // a parità di rilevanza: ordine numerico se possibile, altrimenti alfabetico
+        var s1 = search.getSearchString(f1), s2 = search.getSearchString(f2);
+        var n1 = parseFloat(s1), n2 = parseFloat(s2);
+        if (!isNaN(n1) && !isNaN(n2)) return n1 - n2;
+        if (s1 < s2) return -1;
+        if (s1 > s2) return 1;
         return 0;
       });
       ol.control.SearchFeature.prototype.drawList_.call(search, auto);
